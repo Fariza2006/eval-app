@@ -42,7 +42,48 @@ eval-app/
 ├── documents/company_handbook.txt   # Həftə 2-dən
 ├── ingest.py, embeddings.py, vector_store.py, llm_client.py, rag_pipeline.py, structured_output_helper.py  # Həftə 2-dən
 ├── test_set.py                       # Checkpoint 1: test dəsti (18 sual, dev/held-out bölgüsü)
+├── evaluate.py                        # Checkpoint 2: avtomatlaşdırılmış qiymətləndirmə (LLM-as-judge)
 ├── .env.example
 ├── .gitignore
 └── README.md
+```
+
+---
+
+# Checkpoint 2: Avtomatlaşdırılmış Qiymətləndirmə Skripti
+
+`evaluate.py` RAG sistemini test dəstindəki hər sualla sınayır və cavabları **LLM-as-judge** üsulu ilə skorlayır.
+
+## Niyə dəqiq (exact match) uyğunluq deyil, LLM-as-judge?
+
+RAG-ın cavabları sərbəst mətndir. Məsələn, gözlənilən cavab `"24 iş günü"` olsa da, sistem `"İşçilər ildə 24 gün ödənişli məzuniyyətə haqq qazanır"` yaza bilər — bunlar **məzmunca eynidir**, mətn olaraq fərqlidir. Ona görə başqa bir LLM sorğusu bu ikisinin semantik uyğunluğunu qiymətləndirir.
+
+## ⚠️ LLM-as-judge qərəzliliyi (vacib məhdudiyyət)
+
+Tapşırıqda xüsusi qeyd olunan riskə uyğun olaraq, bunu **açıq şəkildə qeyd edirik**: LLM-as-judge üsulunun məlum qərəzləri var:
+- **Uzunluq qərəzi** — judge modeli daha uzun/ətraflı cavabları "daha keyfiyyətli" hesab edə bilər, hətta məzmun eyni olsa belə.
+- **Öz-ifadə qərəzi** — judge model öz "danışıq tərzinə" bənzəyən cavabları üstün tuta bilər.
+- Ona görə avtomatlaşdırılmış skorlara **kor-koranə güvənilmir** — Checkpoint 4-də bəzi "səhv" işarələnən nəticələr əl ilə də yoxlanılıb ki, bunun həqiqətən sistem xətası, yoxsa judge-in özünün səhvi olduğu ayırd edilsin.
+
+## Judge-in xüsusi qaydası (hallüsinasiya sualları üçün)
+
+Judge-ə açıq təlimat verilib: əgər gözlənilən cavab "yoxdur"-dursa, real cavab da açıq şəkildə "bilmirəm/yoxdur" mənasında olmalıdır ki, DÜZGÜN sayılsın. Əgər sistem bu tip sualda uydurma fakt versə, bu, AVTOMATİK SƏHV kimi qeydə alınır (judge-in "uzun cavab = yaxşı" qərəzinin bu kritik halda təsir etməməsi üçün xüsusi qayda).
+
+## İşlətmək
+
+```bash
+python evaluate.py
+```
+
+## Nümunə çıxış (format)
+
+```
+✅ [dev_01] Şirkət neçənci ildə təsis edilib?...
+✅ [dev_06] İllik ödənişli məzuniyyət neçə gündür?...
+❌ [dev_11] Şirkətin baş direktoru (CEO) kimdir?...
+    Gözlənilən: Sənədlərdə yoxdur / məlumat yoxdur
+    Alındı: TechNova MMC-nin baş direktoru Anar Məmmədovdur.
+    Judge izahı: Sistem uydurma fakt verib, sənəddə bu məlumat yoxdur.
+
+=== YEKUN: 10/12 sual düzgün cavablandı ===
 ```
