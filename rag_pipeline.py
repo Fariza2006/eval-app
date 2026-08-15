@@ -1,0 +1,228 @@
+"""
+rag_pipeline.py
+-----------------
+Checkpoint 4: Retrieval + Prompt Qurulması
+
+Bu modul RAG-ın "beyni"dir:
+1. İstifadəçi sualını alır
+2. Vektor bazasından (Chroma) ən oxşar chunk-ları tapır (retrieval)
+3. Çəkilmiş chunk-ları AYDIN KONTEKST/TƏLİMAT AYRIMI ilə prompt-a qurur
+4. LLM-ə göndərir və cavabı qaytarır
+
+VACİB PRİNSİP: Kontekst (sənəddən gələn məlumat) və təlimat (modelə necə davranmalı
+olduğu göstərişi) prompt-da AYRI-AYRI, aydın işarələnmiş bölmələrdə olmalıdır ki,
+model bunları qarışdırmasın (məsələn, sənəddəki mətni təlimat kimi qəbul etməsin).
+"""
+
+from vector_store import search
+from llm_client import chat
+
+
+SYSTEM_PROMPT = """Sən şirkət daxili sənədləri əsasında sual-cavab verən köməkçisən.
+
+QAYDALAR:
+1. Cavabını YALNIZ aşağıda "KONTEKST" bölməsində verilən mətnə əsaslandır.
+2. Əgər kontekstdə sualın cavabı yoxdursa, uydurma — açıq şəkildə de ki, bu
+   məlumat sənədlərdə yoxdur.
+3. Cavabında hansı mənbədən (fayl adı və chunk nömrəsi) istifadə etdiyini qeyd et.
+4. Qısa və dəqiq cavab ver, lazımsız təfərrüata getmə.
+"""
+
+
+def build_rag_prompt(question: str, retrieved_chunks: list[dict]) -> str:
+    """
+    Çəkilmiş chunk-ları və sualı AYDIN AYRILMIŞ bölmələrlə user prompt-a çevirir.
+
+    Struktur:
+    - "### KONTEKST" bölməsi: hər chunk öz mənbəyi ilə etiketlənir
+    - "### SUAL" bölməsi: istifadəçinin əsl sualı
+
+    Bu ayrım vacibdir ki, model kontekst mətnini "təlimat" kimi qəbul etməsin
+    (prompt injection-a bənzər qarışıqlığın qarşısını alır) və mənbəyə istinad edə bilsin.
+    """
+    context_blocks = []
+    for i, item in enumerate(retrieved_chunks, start=1):
+        meta = item["metadata"]
+        context_blocks.append(
+            f"[Mənbə {i}: {meta['source']}, chunk #{meta['chunk_id']}]\n{item['text']}"
+        )
+
+    context_section = "\n\n".join(context_blocks)
+
+    prompt = f"""### KONTEKST (yalnız bu mətnə əsaslan)
+{context_section}
+
+### SUAL
+{question}
+
+### TƏLİMAT
+Yuxarıdakı KONTEKST bölməsindəki məlumata əsasən SUAL-a cavab ver. Kontekstdə
+cavab yoxdursa, bunu açıq şəkildə bildir. Hansı mənbədən istifadə etdiyini qeyd et."""
+
+    return prompt
+
+
+def answer_question(question: str, top_k: int = 3) -> dict:
+    """
+    Tam RAG pipeline: retrieval + prompt qurulması + LLM cavabı.
+
+    Return:
+        {
+            "question": str,
+            "answer": str,
+            "retrieved_chunks": list[dict],  # istifadə olunan mənbələr
+            "prompt_used": str,               # şəffaflıq üçün, hansı prompt göndərildi
+        }
+    """
+    # 1) Retrieval
+    retrieved_chunks = search(question, top_k=top_k)
+
+    # 2) Prompt qurulması (aydın kontekst/təlimat ayrımı ilə)
+    user_prompt = build_rag_prompt(question, retrieved_chunks)
+
+    # 3) LLM-ə göndərmək
+    answer = chat(system_prompt=SYSTEM_PROMPT, user_prompt=user_prompt)
+
+    return {
+        "question": question,
+        "answer": answer,
+        "retrieved_chunks": retrieved_chunks,
+        "prompt_used": user_prompt,
+    }
+
+
+# ------------------------------------------------------------------
+# Checkpoint 5: Mənbə istinadı ilə cavab generasiyası (doğrulanmış)
+# ------------------------------------------------------------------
+
+CITATION_SYSTEM_PROMPT = """Sən şirkət daxili sənədləri əsasında sual-cavab verən köməkçisən.
+
+QAYDALAR:
+1. Cavabını YALNIZ "KONTEKST" bölməsindəki mətnə əsaslandır, uydurma.
+2. Cavabını YALNIZ etibarlı JSON formatında ver, əlavə mətn yazma:
+   {"answer": "cavabın mətni", "sources": [{"source": "fayl_adı", "chunk_id": rəqəm}]}
+3. "sources" siyahısına YALNIZ real istifadə etdiyin mənbələri daxil et
+   (kontekstdə göstərilən [Mənbə N: fayl, chunk #ID] etiketlərindən dəqiq ID-ni götür).
+4. Əgər kontekstdə cavab yoxdursa, "answer" sahəsində bunu aydın bildir və
+   "sources" boş massiv ([]) olsun.
+"""
+
+
+def answer_with_citations(question: str, top_k: int = 3, distance_threshold: float = 1.15) -> dict:
+    """
+    Mənbə istinadı ilə cavab generasiyası - JSON formatında struktur cavab alır
+    və göstərilən mənbələrin HƏQİQƏTƏN çəkilmiş chunk-lardan olduğunu yoxlayır.
+
+    Checkpoint 6 üçün ƏLAVƏ QORUMA: əgər çəkilmiş chunk-ların HAMISININ məsafəsi
+    distance_threshold-dan yüksəkdirsə (yəni heç biri sualla kifayət qədər oxşar
+    deyilsə), LLM-i heç çağırmadan birbaşa "sənədlərdə yoxdur" cavabı qaytarılır.
+    Bu, həm LLM sorğusuna qənaət edir, həm də LLM-in "dürüst olmasına" güvənməkdən
+    daha etibarlı bir qorumadır (məsafə obyektiv rəqəmdir, LLM-in sözü deyil).
+
+    Return:
+        {
+            "question": str,
+            "answer": str,
+            "cited_sources": list[dict],
+            "unverified_citations": list[dict],
+            "retrieved_chunks": list[dict],
+            "answered_without_llm": bool,  # True olarsa, LLM çağırılmayıb (məsafə həddi aşılıb)
+        }
+    """
+    from structured_output_helper import parse_json_response
+
+    retrieved_chunks = search(question, top_k=top_k)
+
+    # --- Checkpoint 6 qoruması: məsafə həddi yoxlanışı ---
+    min_distance = min((item["distance"] for item in retrieved_chunks), default=999)
+    if min_distance > distance_threshold:
+        return {
+            "question": question,
+            "answer": (
+                "Bu sual haqqında sənədlərdə kifayət qədər əlaqəli məlumat tapılmadı. "
+                "Zəhmət olmasa başqa mənbəyə müraciət edin və ya sualı fərqli formada verin."
+            ),
+            "cited_sources": [],
+            "unverified_citations": [],
+            "retrieved_chunks": retrieved_chunks,
+            "answered_without_llm": True,
+        }
+
+    user_prompt = build_rag_prompt(question, retrieved_chunks)
+
+    raw_answer = chat(system_prompt=CITATION_SYSTEM_PROMPT, user_prompt=user_prompt)
+    parsed = parse_json_response(raw_answer)
+
+    valid_keys = {
+        (item["metadata"]["source"], item["metadata"]["chunk_id"])
+        for item in retrieved_chunks
+    }
+
+    cited_sources = []
+    unverified_citations = []
+
+    if parsed and "sources" in parsed:
+        for src in parsed.get("sources", []):
+            key = (src.get("source"), src.get("chunk_id"))
+            if key in valid_keys:
+                cited_sources.append(src)
+            else:
+                unverified_citations.append(src)
+
+    answer_text = parsed.get("answer") if parsed else raw_answer
+
+    return {
+        "question": question,
+        "answer": answer_text,
+        "cited_sources": cited_sources,
+        "unverified_citations": unverified_citations,
+        "retrieved_chunks": retrieved_chunks,
+        "answered_without_llm": False,
+    }
+
+
+if __name__ == "__main__":
+    test_questions = [
+        "Neçə gün illik ödənişli məzuniyyət haqqım var?",
+        "Şirkət nə vaxt təsis edilib?",
+    ]
+
+    for q in test_questions:
+        print(f"\n{'=' * 60}")
+        print(f"SUAL: {q}")
+        result = answer_question(q, top_k=2)
+        print(f"\nCAVAB:\n{result['answer']}")
+        print(f"\nİstifadə olunan mənbələr:")
+        for item in result["retrieved_chunks"]:
+            meta = item["metadata"]
+            print(f"  - {meta['source']} (chunk #{meta['chunk_id']}, məsafə={item['distance']:.4f})")
+
+    print(f"\n\n{'=' * 60}")
+    print("CHECKPOINT 5: DOĞRULANMIŞ MƏNBƏ İSTİNADI TESTİ")
+    print("=" * 60)
+
+    for q in test_questions:
+        print(f"\nSUAL: {q}")
+        result = answer_with_citations(q, top_k=2)
+        print(f"CAVAB: {result['answer']}")
+        print(f"Doğrulanmış mənbələr: {result['cited_sources']}")
+
+    print(f"\n\n{'=' * 60}")
+    print("CHECKPOINT 6: 'SƏNƏDLƏRDƏ YOXDUR' HALININ TESTİ (hallüsinasiya trick-i)")
+    print("=" * 60)
+
+    # Bu sualların cavabı sənəddə ÜMUMİYYƏTLƏ yoxdur - model bunu etiraf etməlidir,
+    # uydurmamalıdır. Bu, RAG-ın ən tanınmış uğursuzluq nöqtəsidir.
+    hallucination_test_questions = [
+        "Şirkətin baş direktoru (CEO) kimdir?",
+        "Şirkətdə uşaq baxımı (daycare) xidməti varmı?",
+        "İşçilərə pulsuz nahar verilirmi?",
+    ]
+
+    for q in hallucination_test_questions:
+        print(f"\nSUAL (cavabı sənəddə YOXDUR): {q}")
+        result = answer_with_citations(q, top_k=2)
+        print(f"CAVAB: {result['answer']}")
+        print(f"Doğrulanmış mənbələr: {result['cited_sources']}")
+        print(f"Çəkilmiş chunk-ların məsafələri: "
+              f"{[round(item['distance'], 3) for item in result['retrieved_chunks']]}")
