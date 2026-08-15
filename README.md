@@ -87,3 +87,45 @@ python evaluate.py
 
 === YEKUN: 10/12 sual düzgün cavablandı ===
 ```
+
+---
+
+# Checkpoint 3: İzlənilən Metriklər
+
+`metrics.py` `evaluate.py`-in nəticələrini alıb, aqreqasiya edilmiş metrikləri hesablayır:
+
+- **Accuracy/pass-rate** — düzgün cavabların faizi (judge "naməlum" saydığı hallar bu hesabdan xaric edilir ki, rəqəm süni şəkildə aşağı düşməsin)
+- **Orta cavab müddəti (latency)** — hər sualın RAG pipeline-dan cavab almaq üçün çəkdiyi orta vaxt
+- **Orta token xərci** — `llm_client.py`-ə əlavə etdiyimiz token izləmə mexanizmi (`_usage_log`) vasitəsilə hesablanır; hər API çağırışının `prompt_tokens`, `completion_tokens`, `estimated_cost` məlumatı toplanır
+- **Kateqoriya üzrə accuracy** — `normal`/`edge_case`/`hallucination` sualları ayrı-ayrı qiymətləndirilir ki, sistemin HANSI tip sualda daha zəif olduğu aydın olsun
+
+## İşlətmək
+
+```bash
+python metrics.py
+```
+
+## Nümunə çıxış (format)
+
+```
+==================================================
+METRİKLƏR HESABATI
+==================================================
+Ümumi sual sayı:      12
+Düzgün:                9
+Səhv:                  2
+Naməlum (judge xətası): 1
+Accuracy (pass-rate):  81.8%
+Orta cavab müddəti:    2.3 saniyə
+Orta giriş tokeni:     650.0
+Orta çıxış tokeni:     45.0
+Orta cəmi token:       695.0
+Orta xərc (sorğu üçün): $0.000015
+
+Kateqoriya üzrə accuracy:
+  normal: 7/8 (87.5%)
+  edge_case: 1/2 (50.0%)
+  hallucination: 1/2 (50.0%)
+```
+
+Bu format aydın göstərir ki, sistem **normal** suallarda güclü, amma **edge_case** və **hallucination** suallarında nisbətən zəifdir — bu, Checkpoint 4-dəki kök-səbəb analizinin başlanğıc nöqtəsidir.

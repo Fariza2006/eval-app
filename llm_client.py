@@ -3,6 +3,9 @@ llm_client.py
 --------------
 RAG pipeline üçün sadə LLM chat client-i (Hugging Face router API, OpenAI-uyğun format).
 Bax: Həftə 1-dəki hf_client.py-ın sadələşdirilmiş versiyası.
+
+Checkpoint 3 (Həftə 4) üçün əlavə: hər sorğunun token istifadəsi/xərci modul-səviyəli
+bir siyahıda (_usage_log) toplanır ki, metrics.py bunları oxuyub orta dəyərləri hesablaya bilsin.
 """
 
 import os
@@ -13,6 +16,19 @@ load_dotenv()
 
 DEFAULT_CHAT_MODEL = "meta-llama/Llama-3.1-8B-Instruct"
 API_URL = "https://router.huggingface.co/v1/chat/completions"
+
+# Checkpoint 3: hər çağırışın token/xərc məlumatını toplayan sadə "in-memory" log
+_usage_log: list[dict] = []
+
+
+def get_usage_log() -> list[dict]:
+    """Toplanan bütün usage qeydlərini qaytarır (metrics.py bundan istifadə edir)."""
+    return _usage_log
+
+
+def reset_usage_log():
+    """Usage log-u sıfırlayır (yeni bir qiymətləndirmə dövrünə təmiz başlamaq üçün)."""
+    _usage_log.clear()
 
 
 def chat(system_prompt: str, user_prompt: str, model: str | None = None, temperature: float = 0.3) -> str:
@@ -40,4 +56,10 @@ def chat(system_prompt: str, user_prompt: str, model: str | None = None, tempera
         raise RuntimeError(f"LLM API xətası (status {response.status_code}): {response.text}")
 
     data = response.json()
+
+    # Checkpoint 3: usage məlumatını topla (varsa)
+    usage = data.get("usage")
+    if usage:
+        _usage_log.append(usage)
+
     return data["choices"][0]["message"]["content"].strip()
