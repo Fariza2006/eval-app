@@ -129,3 +129,50 @@ Kateqoriya üzrə accuracy:
 ```
 
 Bu format aydın göstərir ki, sistem **normal** suallarda güclü, amma **edge_case** və **hallucination** suallarında nisbətən zəifdir — bu, Checkpoint 4-dəki kök-səbəb analizinin başlanğıc nöqtəsidir.
+
+---
+
+# Checkpoint 5: Uğursuzluq Kateqoriyasının Düzəldilməsi (Few-Shot Prompt Optimallaşdırması)
+
+`prompt_optimization.py` `failure_analysis.md`-dəki **Hal 2**-ni (zəif prompt — model "yoxdur" cavabında belə JSON-un `sources` sahəsini boş qoymurdu) **few-shot nümunə** əlavə edərək düzəltməyə çalışır.
+
+## Təkmilləşdirmə
+
+Orijinal sistem promptuna (`CITATION_SYSTEM_PROMPT`) **bir konkret nümunə** əlavə olundu — düzgün format necə olmalı olduğunu göstərən bir "sual → düzgün JSON cavab" cütü:
+
+```
+NÜMUNƏ:
+Sual: "Şirkətin ofisi hansı ölkədədir?" (kontekstdə yoxdur fərz edilir)
+Düzgün format:
+{"answer": "Bu barədə sənədlərdə məlumat tapılmadı.", "sources": []}
+```
+
+## Metodologiya (test dəsti çirklənməsinin qarşısı)
+
+- Təkmilləşdirmə **yalnız** əvvəllər müşahidə olunmuş DEV_SET/Həftə 2 nümunəsinə əsaslanıb.
+- Əvvəl/sonra müqayisəsi isə **`HELD_OUT_TEST_SET`**-dəki bir sualla aparılır — bu sual təkmilləşdirmə prosesində **heç vaxt görülməyib**. Bu, tapşırıqda xəbərdarlıq edilən "test dəsti çirklənməsi" trick-inin qarşısını almaq üçündür: əgər eyni nümunə ilə həm tənzimləsək, həm yoxlasaq, "təkmilləşmə" nəticəsi etibarsız olardı.
+
+## İşlətmək
+
+```bash
+python prompt_optimization.py
+```
+
+## Nümunə nəticə (format)
+
+```
+HELD-OUT TEST SUALI (əvvəllər görülməyib): İşçilərə pulsuz nahar verilirmi?
+
+=== ƏVVƏL (orijinal prompt) ===
+Xam JSON: {'answer': 'Bu barədə məlumat yoxdur.', 'sources': [{'source': 'company_handbook.txt', 'chunk_id': 3}]}
+'sources boş olmalı' qaydasına əməl edildi mi? ❌ XEYR
+
+=== SONRA (few-shot nümunə ilə təkmilləşdirilmiş prompt) ===
+Xam JSON: {'answer': 'Bu barədə məlumat yoxdur.', 'sources': []}
+'sources boş olmalı' qaydasına əməl edildi mi? ✅ BƏLİ
+
+=== NƏTİCƏ ===
+Əvvəl: ❌  ->  Sonra: ✅
+```
+
+**Qeyd:** kiçik open-source modellərdə few-shot təkmilləşdirmələr **100% zəmanətli deyil** — model bəzən yenə köhnə davranışa qayıda bilər (bu, əvvəlki checkpoint-lərdə gördüyümüz kimi, kiçik modellərin ümumi məhdudiyyətidir). Ona görə production mühitində bu tip düzəlişlər **bir dəfəlik test deyil, davamlı monitorinqlə** yoxlanılmalıdır.
